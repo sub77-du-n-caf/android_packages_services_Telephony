@@ -16,6 +16,8 @@
 
 package com.android.phone;
 
+import static com.android.internal.telephony.PhoneConstants.SUBSCRIPTION_KEY;
+
 import android.app.ActivityManager;
 import android.app.AppOpsManager;
 import android.content.ComponentName;
@@ -34,29 +36,32 @@ import android.os.Message;
 import android.os.Process;
 import android.os.ResultReceiver;
 import android.os.ServiceManager;
+import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.os.UserManager;
 import android.preference.PreferenceManager;
 import android.provider.Settings;
+import android.service.carrier.CarrierIdentifier;
 import android.telecom.PhoneAccount;
 import android.telecom.PhoneAccountHandle;
 import android.telecom.TelecomManager;
 import android.telephony.CarrierConfigManager;
 import android.telephony.CellInfo;
 import android.telephony.IccOpenLogicalChannelResponse;
+import android.telephony.ModemActivityInfo;
 import android.telephony.NeighboringCellInfo;
 import android.telephony.RadioAccessFamily;
 import android.telephony.ServiceState;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
+import android.telephony.TelephonyHistogram;
 import android.telephony.TelephonyManager;
-import android.telephony.ModemActivityInfo;
+import android.telephony.VisualVoicemailSmsFilterSettings;
 import android.text.TextUtils;
 import android.util.ArraySet;
 import android.util.Log;
 import android.util.Pair;
 import android.util.Slog;
-
 import com.android.ims.ImsManager;
 import com.android.internal.telephony.CallManager;
 import com.android.internal.telephony.CellNetworkScanResult;
@@ -67,9 +72,10 @@ import com.android.internal.telephony.IccCard;
 import com.android.internal.telephony.MccTable;
 import com.android.internal.telephony.OperatorInfo;
 import com.android.internal.telephony.Phone;
+import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.ProxyController;
-import com.android.internal.telephony.PhoneConstants;
+import com.android.internal.telephony.RIL;
 import com.android.internal.telephony.RILConstants;
 import com.android.internal.telephony.SubscriptionController;
 import com.android.internal.telephony.uicc.IccIoResult;
@@ -77,10 +83,10 @@ import com.android.internal.telephony.uicc.IccUtils;
 import com.android.internal.telephony.uicc.UiccCard;
 import com.android.internal.telephony.uicc.UiccController;
 import com.android.internal.util.HexDump;
+import com.android.phone.settings.VisualVoicemailSettingsUtil;
 import com.android.phone.settings.VoicemailNotificationSettingsUtil;
-
-import static com.android.internal.telephony.PhoneConstants.SUBSCRIPTION_KEY;
-
+import java.io.FileDescriptor;
+import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -138,6 +144,16 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
     private static final int EVENT_PERFORM_NETWORK_SCAN_DONE = 40;
     private static final int CMD_SET_NETWORK_SELECTION_MODE_MANUAL = 41;
     private static final int EVENT_SET_NETWORK_SELECTION_MODE_MANUAL_DONE = 42;
+    private static final int CMD_SET_ALLOWED_CARRIERS = 43;
+    private static final int EVENT_SET_ALLOWED_CARRIERS_DONE = 44;
+    private static final int CMD_GET_ALLOWED_CARRIERS = 45;
+    private static final int EVENT_GET_ALLOWED_CARRIERS_DONE = 46;
+
+    private static final int CMD_SIM_GET_ATR = 143;
+    private static final int EVENT_SIM_GET_ATR_DONE = 144;
+    private static final int CMD_OPEN_CHANNEL_WITH_P2 = 145;
+
+    private static final String PRIMARY_CARD_PROPERTY_NAME = "persist.radio.primarycard";
 
     /** The singleton instance. */
     private static PhoneInterfaceManager sInstance;
@@ -339,12 +355,15 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
                 case EVENT_TRANSMIT_APDU_LOGICAL_CHANNEL_DONE:
                     ar = (AsyncResult) msg.obj;
                     request = (MainThreadRequest) ar.userObj;
+                    request.result = ar.result;
                     if (ar.exception == null && ar.result != null) {
-                        request.result = ar.result;
+                        if (DBG) log("EVENT_TRANSMIT_APDU_LOGICAL_CHANNEL_DONE successful");
                     } else {
-                        request.result = new IccIoResult(0x6F, 0, (byte[])null);
                         if (ar.result == null) {
-                            loge("iccTransmitApduLogicalChannel: Empty response");
+                            loge("iccTransmitApduLogicalChannel: Empty response received."
+                                    + "Setting result: sw1 = 0x6F and sw2 = 0");
+                            // If the request fails with an empty payload.
+                            request.result = new IccIoResult(0x6F, 0, (byte[])null);
                         } else if (ar.exception instanceof CommandException) {
                             loge("iccTransmitApduLogicalChannel: CommandException: " +
                                     ar.exception);
@@ -379,12 +398,14 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
                 case EVENT_TRANSMIT_APDU_BASIC_CHANNEL_DONE:
                     ar = (AsyncResult) msg.obj;
                     request = (MainThreadRequest) ar.userObj;
+                    request.result = ar.result;
                     if (ar.exception == null && ar.result != null) {
-                        request.result = ar.result;
+                        if (DBG) log("EVENT_TRANSMIT_APDU_BASIC_CHANNEL_DONE successful");
                     } else {
-                        request.result = new IccIoResult(0x6F, 0, (byte[])null);
                         if (ar.result == null) {
-                            loge("iccTransmitApduBasicChannel: Empty response");
+                            loge("iccTransmitApduBasicChannel: Empty response received."
+                            + "Setting result: sw1 = 0x6F and sw2 = 0");
+                            request.result = new IccIoResult(0x6F, 0, (byte[])null);
                         } else if (ar.exception instanceof CommandException) {
                             loge("iccTransmitApduBasicChannel: CommandException: " +
                                     ar.exception);
@@ -419,10 +440,20 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
                 case EVENT_EXCHANGE_SIM_IO_DONE:
                     ar = (AsyncResult) msg.obj;
                     request = (MainThreadRequest) ar.userObj;
+                    request.result = ar.result;
                     if (ar.exception == null && ar.result != null) {
-                        request.result = ar.result;
+                        if (DBG) log("EVENT_EXCHANGE_SIM_IO_DONE successful");
                     } else {
-                        request.result = new IccIoResult(0x6f, 0, (byte[])null);
+                        if (ar.result == null) {
+                            loge("ccExchangeSimIO: Empty Response recieved."
+                            + "Setting result: sw1 = 0x6F and sw2 = 0");
+                            request.result = new IccIoResult(0x6F, 0, (byte[])null);
+                        } else if (ar.exception instanceof CommandException) {
+                            loge("iccTransmitApduBasicChannel: CommandException: " +
+                                    ar.exception);
+                        } else {
+                            loge("iccTransmitApduBasicChannel: Unknown exception");
+                        }
                     }
                     synchronized (request) {
                         request.notifyAll();
@@ -480,6 +511,24 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
                         uiccCard.iccOpenLogicalChannel((String)request.argument, onCompleted);
                     }
                     break;
+
+                case CMD_OPEN_CHANNEL_WITH_P2:
+                    request = (MainThreadRequest) msg.obj;
+                    uiccCard = getUiccCardUsingSubId(request.subId);
+                    Pair<String, Byte> openChannelArgs = (Pair<String, Byte>) request.argument;
+                    if (uiccCard == null) {
+                        loge("iccOpenLogicalChannel: No UICC");
+                        request.result = new IccOpenLogicalChannelResponse(-1,
+                            IccOpenLogicalChannelResponse.STATUS_MISSING_RESOURCE, null);
+                        synchronized (request) {
+                            request.notifyAll();
+                        }
+                    } else {
+                        onCompleted = obtainMessage(EVENT_OPEN_CHANNEL_DONE, request);
+                        uiccCard.iccOpenLogicalChannel(openChannelArgs.first,
+                            openChannelArgs.second, onCompleted);
+                }
+                break;
 
                 case EVENT_OPEN_CHANNEL_DONE:
                     ar = (AsyncResult) msg.obj;
@@ -760,6 +809,104 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
                     }
                     break;
 
+                case CMD_SIM_GET_ATR:
+                    request = (MainThreadRequest) msg.obj;
+                    uiccCard = getUiccCardUsingSubId(request.subId);
+                    if (uiccCard == null) {
+                        loge("getAtr: No UICC");
+                        request.result = "";
+                         synchronized (request) {
+                            request.notifyAll();
+                        }
+                    } else {
+                        onCompleted = obtainMessage(EVENT_SIM_GET_ATR_DONE, request);
+                        uiccCard.getAtr(onCompleted);
+                    }
+                    break;
+
+                case EVENT_SIM_GET_ATR_DONE:
+                    ar = (AsyncResult) msg.obj;
+                    request = (MainThreadRequest) ar.userObj;
+                    if (ar.exception == null) {
+                        request.result = ar.result;
+                    } else {
+                        request.result = "";
+                        if (ar.result == null) {
+                            loge("ccExchangeSimIO: Empty Response");
+                        } else if (ar.exception instanceof CommandException) {
+                            loge("iccTransmitApduBasicChannel: CommandException: " +
+                                    ar.exception);
+                        } else {
+                            loge("iccTransmitApduBasicChannel: Unknown exception");
+                        }
+                    }
+                    synchronized (request) {
+                        request.notifyAll();
+                    }
+                    break;
+
+                case CMD_SET_ALLOWED_CARRIERS:
+                    request = (MainThreadRequest) msg.obj;
+                    onCompleted = obtainMessage(EVENT_SET_ALLOWED_CARRIERS_DONE, request);
+                    mPhone.setAllowedCarriers(
+                            (List<CarrierIdentifier>) request.argument,
+                            onCompleted);
+                    break;
+
+                case EVENT_SET_ALLOWED_CARRIERS_DONE:
+                    ar = (AsyncResult) msg.obj;
+                    request = (MainThreadRequest) ar.userObj;
+                    if (ar.exception == null && ar.result != null) {
+                        request.result = ar.result;
+                    } else {
+                        if (ar.result == null) {
+                            loge("setAllowedCarriers: Empty response");
+                        } else if (ar.exception instanceof CommandException) {
+                            loge("setAllowedCarriers: CommandException: " +
+                                    ar.exception);
+                        } else {
+                            loge("setAllowedCarriers: Unknown exception");
+                        }
+                    }
+                    // Result cannot be null. Return -1 on error.
+                    if (request.result == null) {
+                        request.result = new int[]{-1};
+                    }
+                    synchronized (request) {
+                        request.notifyAll();
+                    }
+                    break;
+
+                case CMD_GET_ALLOWED_CARRIERS:
+                    request = (MainThreadRequest) msg.obj;
+                    onCompleted = obtainMessage(EVENT_GET_ALLOWED_CARRIERS_DONE, request);
+                    mPhone.getAllowedCarriers(onCompleted);
+                    break;
+
+                case EVENT_GET_ALLOWED_CARRIERS_DONE:
+                    ar = (AsyncResult) msg.obj;
+                    request = (MainThreadRequest) ar.userObj;
+                    if (ar.exception == null && ar.result != null) {
+                        request.result = ar.result;
+                    } else {
+                        if (ar.result == null) {
+                            loge("getAllowedCarriers: Empty response");
+                        } else if (ar.exception instanceof CommandException) {
+                            loge("getAllowedCarriers: CommandException: " +
+                                    ar.exception);
+                        } else {
+                            loge("getAllowedCarriers: Unknown exception");
+                        }
+                    }
+                    // Result cannot be null. Return empty list of CarrierIdentifier.
+                    if (request.result == null) {
+                        request.result = new ArrayList<CarrierIdentifier>(0);
+                    }
+                    synchronized (request) {
+                        request.notifyAll();
+                    }
+                    break;
+
                 default:
                     Log.w(LOG_TAG, "MainThreadHandler: unexpected message code: " + msg.what);
                     break;
@@ -892,6 +1039,12 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
     private Phone getPhone(int subId) {
         return PhoneFactory.getPhone(mSubscriptionController.getPhoneId(subId));
     }
+
+    private UiccCard getUiccCardUsingSubId(int subId) {
+        Phone phone = getPhone(subId);
+        return UiccController.getInstance().getUiccCard(phone.getPhoneId());
+    }
+
     //
     // Implementation of the ITelephony interface.
     //
@@ -1119,7 +1272,9 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
 
     public int[] supplyPinReportResultForSubscriber(int subId, String pin) {
         enforceModifyPermission();
-        final UnlockSim checkSimPin = new UnlockSim(getPhone(subId).getIccCard());
+        Phone phone = getPhone(subId);
+        if (phone == null) return returnErrorForPinPukOperation();
+        final UnlockSim checkSimPin = new UnlockSim(phone.getIccCard());
         checkSimPin.start();
         return checkSimPin.unlockSim(null, pin);
     }
@@ -1131,9 +1286,20 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
 
     public int[] supplyPukReportResultForSubscriber(int subId, String puk, String pin) {
         enforceModifyPermission();
-        final UnlockSim checkSimPuk = new UnlockSim(getPhone(subId).getIccCard());
+        Phone phone = getPhone(subId);
+        if (phone == null) return returnErrorForPinPukOperation();
+        final UnlockSim checkSimPuk = new UnlockSim(phone.getIccCard());
         checkSimPuk.start();
         return checkSimPuk.unlockSim(puk, pin);
+    }
+
+    private int[] returnErrorForPinPukOperation() {
+        int[] resultArray = new int[2];
+        resultArray[0] = PhoneConstants.PIN_GENERAL_FAILURE;
+        //This field is for attempts remaining, anything < 0 is considered
+        //as invalid. This is returned in case of actual PIN FAILURE from UIM.
+        resultArray[1] = -1;
+        return resultArray;
     }
 
     /**
@@ -1827,6 +1993,58 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
         return success;
     }
 
+    @Override
+    public void setVisualVoicemailEnabled(String callingPackage,
+            PhoneAccountHandle phoneAccountHandle, boolean enabled) {
+        mAppOps.checkPackage(Binder.getCallingUid(), callingPackage);
+        if (!TextUtils.equals(callingPackage,
+                TelecomManager.from(mPhone.getContext()).getDefaultDialerPackage())) {
+            enforceModifyPermissionOrCarrierPrivilege(
+                    PhoneUtils.getSubIdForPhoneAccountHandle(phoneAccountHandle));
+        }
+        VisualVoicemailSettingsUtil.setEnabled(mPhone.getContext(), phoneAccountHandle, enabled);
+    }
+
+    @Override
+    public boolean isVisualVoicemailEnabled(String callingPackage,
+            PhoneAccountHandle phoneAccountHandle) {
+        if (!canReadPhoneState(callingPackage, "isVisualVoicemailEnabled")) {
+            return false;
+        }
+        return VisualVoicemailSettingsUtil.isEnabled(mPhone.getContext(), phoneAccountHandle);
+    }
+
+    @Override
+    public void enableVisualVoicemailSmsFilter(String callingPackage, int subId,
+            VisualVoicemailSmsFilterSettings settings) {
+        mAppOps.checkPackage(Binder.getCallingUid(), callingPackage);
+        VisualVoicemailSmsFilterConfig
+                .enableVisualVoicemailSmsFilter(mPhone.getContext(), callingPackage, subId,
+                        settings);
+    }
+
+    @Override
+    public void disableVisualVoicemailSmsFilter(String callingPackage, int subId) {
+        mAppOps.checkPackage(Binder.getCallingUid(), callingPackage);
+        VisualVoicemailSmsFilterConfig
+                .disableVisualVoicemailSmsFilter(mPhone.getContext(), callingPackage, subId);
+    }
+
+    @Override
+    public VisualVoicemailSmsFilterSettings getVisualVoicemailSmsFilterSettings(
+            String callingPackage, int subId) {
+        mAppOps.checkPackage(Binder.getCallingUid(), callingPackage);
+        return VisualVoicemailSmsFilterConfig
+                .getVisualVoicemailSmsFilterSettings(mPhone.getContext(), callingPackage, subId);
+    }
+
+    @Override
+    public VisualVoicemailSmsFilterSettings getSystemVisualVoicemailSmsFilterSettings(
+            String packageName, int subId) {
+        enforceReadPrivilegedPermission();
+        return VisualVoicemailSmsFilterConfig
+                .getVisualVoicemailSmsFilterSettings(mPhone.getContext(), packageName, subId);
+    }
     /**
      * Returns the unread count of voicemails
      */
@@ -1855,7 +2073,7 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
      */
     @Override
     public int getNetworkType() {
-        final Phone phone = getPhone(getDefaultSubscription());
+        final Phone phone = getPhone(mSubscriptionController.getDefaultDataSubId());
         if (phone != null) {
             return phone.getServiceState().getDataNetworkType();
         } else {
@@ -1885,7 +2103,8 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
      */
     @Override
     public int getDataNetworkType(String callingPackage) {
-        return getDataNetworkTypeForSubscriber(getDefaultSubscription(), callingPackage);
+        return getDataNetworkTypeForSubscriber(mSubscriptionController.getDefaultDataSubId(),
+                callingPackage);
     }
 
     /**
@@ -2021,6 +2240,18 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
         if (DBG) log("iccOpenLogicalChannel: subId=" + subId + " aid=" + AID);
         IccOpenLogicalChannelResponse response = (IccOpenLogicalChannelResponse)sendRequest(
             CMD_OPEN_CHANNEL, AID, subId);
+        if (DBG) log("iccOpenLogicalChannel: " + response);
+        return response;
+    }
+
+    @Override
+    public IccOpenLogicalChannelResponse iccOpenLogicalChannelWithP2(int subId,
+        String AID, byte p2) {
+        enforceModifyPermissionOrCarrierPrivilege(subId);
+
+        if (DBG) log("iccOpenLogicalChannel: " + p2 + " " + AID);
+        IccOpenLogicalChannelResponse response = (IccOpenLogicalChannelResponse)sendRequest(
+            CMD_OPEN_CHANNEL_WITH_P2, new Pair<String, Byte>(AID, p2), subId);
         if (DBG) log("iccOpenLogicalChannel: " + response);
         return response;
     }
@@ -2759,7 +2990,7 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
         TelecomManager telecomManager = TelecomManager.from(mPhone.getContext());
         TelephonyManager telephonyManager =
                 (TelephonyManager) mPhone.getContext().getSystemService(Context.TELEPHONY_SERVICE);
-        return !telephonyManager.isMultiSimEnabled() && telecomManager.isTtySupported();
+        return telecomManager.isTtySupported();
     }
 
     @Override
@@ -2880,6 +3111,7 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
         }
 
         final long identity = Binder.clearCallingIdentity();
+        int networkMode;
         try {
             if (SubscriptionManager.isUsableSubIdValue(subId) && !mUserManager.hasUserRestriction(
                     UserManager.DISALLOW_CONFIG_MOBILE_NETWORKS)) {
@@ -2888,7 +3120,14 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
                 // Set network selection mode to automatic
                 setNetworkSelectionModeAutomatic(subId);
                 // Set preferred mobile network type to the best available
-                setPreferredNetworkType(subId, Phone.PREFERRED_NT_MODE);
+                if (SystemProperties.getBoolean(PRIMARY_CARD_PROPERTY_NAME, false) ) {
+                    networkMode = PhoneFactory.calculatePreferredNetworkType(
+                            mPhone.getContext(), subId);
+                } else {
+                    networkMode = Phone.PREFERRED_NT_MODE;
+                }
+                setPreferredNetworkType(subId, networkMode);
+
                 // Turn off roaming
                 SubscriptionManager.from(mApp).setDataRoaming(0, subId);
             }
@@ -2978,6 +3217,16 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
         }
     }
 
+    private void enforceCanReadPhoneState(String message) {
+        try {
+            mApp.enforceCallingOrSelfPermission(
+                    android.Manifest.permission.READ_PRIVILEGED_PHONE_STATE, message);
+        } catch (SecurityException e) {
+            mApp.enforceCallingOrSelfPermission(android.Manifest.permission.READ_PHONE_STATE,
+                    message);
+        }
+    }
+
     /**
      * Responds to the ResultReceiver with the {@link android.telephony.ModemActivityInfo} object
      * representing the state of the modem.
@@ -3049,4 +3298,243 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
         return VoicemailNotificationSettingsUtil.isVibrationEnabled(phone);
     }
 
+    @Override
+    public byte[] getAtr(int subId) {
+        if (Binder.getCallingUid() != Process.SYSTEM_UID) {
+            enforceCanReadPhoneState("getAtrUsingSubId");
+        }
+        Log.d(LOG_TAG, "SIM_GET_ATR ");
+        String response = (String)sendRequest(CMD_SIM_GET_ATR, null, subId);
+        byte[] result = null;
+        if (response != null && response.length() != 0) {
+            try{
+                result = IccUtils.hexStringToBytes(response);
+            } catch(RuntimeException re) {
+                Log.e(LOG_TAG, "Invalid format of the response string");
+            }
+        }
+        return result;
+    }
+
+    public int getLteOnGsmMode() {
+        return mPhone.getLteOnGsmMode();
+    }
+
+    /**
+     * Make sure either called from same process as self (phone) or IPC caller has read privilege.
+     *
+     * @throws SecurityException if the caller does not have the required permission
+     */
+    private void enforceReadPrivilegedPermission() {
+        mApp.enforceCallingOrSelfPermission(android.Manifest.permission.READ_PRIVILEGED_PHONE_STATE,
+                null);
+    }
+
+    /**
+     * Return the application ID for the app type.
+     *
+     * @param subId the subscription ID that this request applies to.
+     * @param appType the uicc app type.
+     * @return Application ID for specificied app type, or null if no uicc.
+     */
+    @Override
+    public String getAidForAppType(int subId, int appType) {
+        enforceReadPrivilegedPermission();
+        Phone phone = getPhone(subId);
+        if (phone == null) {
+            return null;
+        }
+        String aid = null;
+        try {
+            aid = UiccController.getInstance().getUiccCard(phone.getPhoneId())
+                    .getApplicationByType(appType).getAid();
+        } catch (Exception e) {
+            Log.e(LOG_TAG, "Not getting aid. Exception ex=" + e);
+        }
+        return aid;
+    }
+
+    /**
+     * Return the Electronic Serial Number.
+     *
+     * @param subId the subscription ID that this request applies to.
+     * @return ESN or null if error.
+     */
+    @Override
+    public String getEsn(int subId) {
+        enforceReadPrivilegedPermission();
+        Phone phone = getPhone(subId);
+        if (phone == null) {
+            return null;
+        }
+        String esn = null;
+        try {
+            esn = phone.getEsn();
+        } catch (Exception e) {
+            Log.e(LOG_TAG, "Not getting ESN. Exception ex=" + e);
+        }
+        return esn;
+    }
+
+    /**
+     * Return the Preferred Roaming List Version.
+     *
+     * @param subId the subscription ID that this request applies to.
+     * @return PRLVersion or null if error.
+     */
+    @Override
+    public String getCdmaPrlVersion(int subId) {
+        enforceReadPrivilegedPermission();
+        Phone phone = getPhone(subId);
+        if (phone == null) {
+            return null;
+        }
+        String cdmaPrlVersion = null;
+        try {
+            cdmaPrlVersion = phone.getCdmaPrlVersion();
+        } catch (Exception e) {
+            Log.e(LOG_TAG, "Not getting PRLVersion", e);
+        }
+        return cdmaPrlVersion;
+    }
+
+    /**
+     * Get snapshot of Telephony histograms
+     * @return List of Telephony histograms
+     * @hide
+     */
+    @Override
+    public List<TelephonyHistogram> getTelephonyHistograms() {
+        enforceModifyPermissionOrCarrierPrivilege(getDefaultSubscription());
+        return RIL.getTelephonyRILTimingHistograms();
+    }
+
+    /**
+     * {@hide}
+     * Set the allowed carrier list for slotId
+     * Require system privileges. In the future we may add this to carrier APIs.
+     *
+     * @return The number of carriers set successfully, should match length of carriers
+     */
+    @Override
+    public int setAllowedCarriers(int slotId, List<CarrierIdentifier> carriers) {
+        enforceModifyPermission();
+        int subId = SubscriptionManager.getSubId(slotId)[0];
+        int[] retVal = (int[]) sendRequest(CMD_SET_ALLOWED_CARRIERS, carriers, subId);
+        return retVal[0];
+    }
+
+    /**
+     * {@hide}
+     * Get the allowed carrier list for slotId.
+     * Require system privileges. In the future we may add this to carrier APIs.
+     *
+     * @return List of {@link android.service.telephony.CarrierIdentifier}; empty list
+     * means all carriers are allowed.
+     */
+    @Override
+    public List<CarrierIdentifier> getAllowedCarriers(int slotId) {
+        enforceReadPrivilegedPermission();
+        int subId = SubscriptionManager.getSubId(slotId)[0];
+        return (List<CarrierIdentifier>) sendRequest(CMD_GET_ALLOWED_CARRIERS, null, subId);
+    }
+
+    /**
+     * Action set from carrier signalling broadcast receivers to enable/disable metered apns
+     * @param subId the subscription ID that this action applies to.
+     * @param enabled control enable or disable metered apns.
+     * {@hide}
+     */
+    @Override
+    public void carrierActionSetMeteredApnsEnabled(int subId, boolean enabled) {
+        enforceModifyPermission();
+        final Phone phone = getPhone(subId);
+        if (phone == null) {
+            loge("carrierAction: SetMeteredApnsEnabled fails with invalid subId: " + subId);
+            return;
+        }
+        try {
+            phone.carrierActionSetMeteredApnsEnabled(enabled);
+        } catch (Exception e) {
+            Log.e(LOG_TAG, "carrierAction: SetMeteredApnsEnabled fails. Exception ex=" + e);
+        }
+    }
+
+    /**
+     * Action set from carrier signalling broadcast receivers to enable/disable radio
+     * @param subId the subscription ID that this action applies to.
+     * @param enabled control enable or disable radio.
+     * {@hide}
+     */
+    @Override
+    public void carrierActionSetRadioEnabled(int subId, boolean enabled) {
+        enforceModifyPermission();
+        final Phone phone = getPhone(subId);
+        if (phone == null) {
+            loge("carrierAction: SetRadioEnabled fails with invalid sibId: " + subId);
+            return;
+        }
+        try {
+            phone.carrierActionSetRadioEnabled(enabled);
+        } catch (Exception e) {
+            Log.e(LOG_TAG, "carrierAction: SetRadioEnabled fails. Exception ex=" + e);
+        }
+    }
+
+    /**
+     * Called when "adb shell dumpsys phone" is invoked. Dump is also automatically invoked when a
+     * bug report is being generated.
+     */
+    @Override
+    protected void dump(FileDescriptor fd, PrintWriter writer, String[] args) {
+        if (mPhone.getContext().checkCallingOrSelfPermission(android.Manifest.permission.DUMP)
+                != PackageManager.PERMISSION_GRANTED) {
+            writer.println("Permission Denial: can't dump Phone from pid="
+                    + Binder.getCallingPid()
+                    + ", uid=" + Binder.getCallingUid()
+                    + "without permission "
+                    + android.Manifest.permission.DUMP);
+            return;
+        }
+        DumpsysHandler.dump(mPhone.getContext(), fd, writer, args);
+    }
+
+    /**
+     * Get aggregated video call data usage from all subscriptions since boot.
+     * @return total data usage in bytes
+     * {@hide}
+     */
+    @Override
+    public long getVtDataUsage() {
+        mApp.enforceCallingOrSelfPermission(android.Manifest.permission.READ_NETWORK_USAGE_HISTORY,
+                null);
+
+        // NetworkStatsService keeps tracking the active network interface and identity. It will
+        // record the delta with the corresponding network identity. What we need to do here is
+        // returning total video call data usage from all subscriptions since boot.
+
+        // TODO: Add sub id support in the future. We'll need it when we support DSDA and
+        // simultaneous VT calls.
+        final Phone[] phones = PhoneFactory.getPhones();
+        long total = 0;
+        for (Phone phone : phones) {
+            total += phone.getVtDataUsage();
+        }
+        return total;
+    }
+
+    /**
+     * Policy control of data connection. Usually used when data limit is passed.
+     * @param enabled True if enabling the data, otherwise disabling.
+     * @param subId Subscription index
+     * {@hide}
+     */
+    @Override
+    public void setPolicyDataEnabled(boolean enabled, int subId) {
+        enforceModifyPermission();
+        Phone phone = getPhone(subId);
+        if (phone != null) {
+            phone.setPolicyDataEnabled(enabled);
+        }
+    }
 }

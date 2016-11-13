@@ -34,10 +34,8 @@ import android.os.Handler;
 import android.os.Message;
 import android.os.PersistableBundle;
 import android.os.PowerManager;
-import android.os.ServiceManager;
 import android.os.SystemClock;
 import android.os.SystemProperties;
-import android.os.SystemService;
 import android.os.UpdateLock;
 import android.os.UserManager;
 import android.preference.PreferenceManager;
@@ -47,7 +45,6 @@ import android.telephony.ServiceState;
 import android.telephony.SubscriptionManager;
 import android.util.Log;
 import android.widget.Toast;
-
 import com.android.internal.telephony.Call;
 import com.android.internal.telephony.CallManager;
 import com.android.internal.telephony.IccCardConstants;
@@ -59,7 +56,6 @@ import com.android.internal.telephony.TelephonyCapabilities;
 import com.android.internal.telephony.TelephonyIntents;
 import com.android.phone.common.CallLogAsync;
 import com.android.phone.settings.SettingsConstants;
-import com.android.server.sip.SipService;
 import com.android.services.telephony.activation.SimActivationManager;
 import com.android.services.telephony.sip.SipUtil;
 
@@ -91,6 +87,7 @@ public class PhoneGlobals extends ContextWrapper {
     private static final boolean DBG =
             (PhoneGlobals.DBG_LEVEL >= 1) && (SystemProperties.getInt("ro.debuggable", 0) == 1);
     private static final boolean VDBG = (PhoneGlobals.DBG_LEVEL >= 2);
+    private static final String PROPERTY_AIRPLANE_MODE_ON = "persist.radio.airplane_mode_on";
 
     // Message codes; see mHandler below.
     private static final int EVENT_SIM_NETWORK_LOCKED = 3;
@@ -201,13 +198,14 @@ public class PhoneGlobals extends ContextWrapper {
                         // Normal case: show the "SIM network unlock" PIN entry screen.
                         // The user won't be able to do anything else until
                         // they enter a valid SIM network PIN.
+                        int subType = (Integer)((AsyncResult)msg.obj).result;
                         Log.i(LOG_TAG, "show sim depersonal panel");
-                        IccNetworkDepersonalizationPanel.showDialog();
+                        IccNetworkDepersonalizationPanel.showDialog(subType);
                     }
                     break;
 
                 case EVENT_DATA_ROAMING_DISCONNECTED:
-                    notificationMgr.showDataDisconnectedRoaming();
+                    notificationMgr.showDataDisconnectedRoaming(msg.arg1);
                     break;
 
                 case EVENT_DATA_ROAMING_OK:
@@ -358,6 +356,7 @@ public class PhoneGlobals extends ContextWrapper {
             intentFilter.addAction(TelephonyIntents.ACTION_RADIO_TECHNOLOGY_CHANGED);
             intentFilter.addAction(TelephonyIntents.ACTION_SERVICE_STATE_CHANGED);
             intentFilter.addAction(TelephonyIntents.ACTION_EMERGENCY_CALLBACK_MODE_CHANGED);
+            intentFilter.addAction(TelephonyIntents.ACTION_DEFAULT_DATA_SUBSCRIPTION_CHANGED);
             registerReceiver(mReceiver, intentFilter);
 
             //set the default values for the preferences in the phone.
@@ -637,23 +636,73 @@ public class PhoneGlobals extends ContextWrapper {
         notifier.updateCallNotifierRegistrationsAfterRadioTechnologyChange();
     }
 
-    private void handleAirplaneModeChange(int newMode) {
-        if (newMode == AIRPLANE_ON) {
+    private void handleAirplaneModeChange(Context context, int newMode) {
+        int cellState = Settings.Global.getInt(context.getContentResolver(),
+                Settings.Global.CELL_ON, PhoneConstants.CELL_ON_FLAG);
+        boolean isAirplaneNewlyOn = (newMode == 1);
+        switch (cellState) {
+            case PhoneConstants.CELL_OFF_FLAG:
+                // Airplane mode does not affect the cell radio if user
+                // has turned it off.
+                break;
+            case PhoneConstants.CELL_ON_FLAG:
+                maybeTurnCellOff(context, isAirplaneNewlyOn);
+                break;
+            case PhoneConstants.CELL_OFF_DUE_TO_AIRPLANE_MODE_FLAG:
+                maybeTurnCellOn(context, isAirplaneNewlyOn);
+                break;
+        }
+    }
+
+    /*
+     * Returns true if the radio must be turned off when entering airplane mode.
+     */
+    private boolean isCellOffInAirplaneMode(Context context) {
+        String airplaneModeRadios = Settings.Global.getString(context.getContentResolver(),
+                Settings.Global.AIRPLANE_MODE_RADIOS);
+        return airplaneModeRadios == null
+                || airplaneModeRadios.contains(Settings.Global.RADIO_CELL);
+    }
+
+    private void setRadioPowerOff(Context context) {
+        Log.i(LOG_TAG, "Turning radio off - airplane");
+        Settings.Global.putInt(context.getContentResolver(), Settings.Global.CELL_ON,
+                 PhoneConstants.CELL_OFF_DUE_TO_AIRPLANE_MODE_FLAG);
+        Settings.Global.putInt(getContentResolver(), Settings.Global.ENABLE_CELLULAR_ON_BOOT, 0);
+        PhoneUtils.setRadioPower(false);
+    }
+
+    private void setRadioPowerOn(Context context) {
+        Log.i(LOG_TAG, "Turning radio on - airplane");
+        Settings.Global.putInt(context.getContentResolver(), Settings.Global.CELL_ON,
+                PhoneConstants.CELL_ON_FLAG);
+        Settings.Global.putInt(getContentResolver(), Settings.Global.ENABLE_CELLULAR_ON_BOOT,
+                1);
+        PhoneUtils.setRadioPower(true);
+    }
+
+    private void maybeTurnCellOff(Context context, boolean isAirplaneNewlyOn) {
+        if (isAirplaneNewlyOn) {
             // If we are trying to turn off the radio, make sure there are no active
             // emergency calls.  If there are, switch airplane mode back to off.
             if (PhoneUtils.isInEmergencyCall(mCM)) {
                 // Switch airplane mode back to off.
+                SystemProperties.set(PROPERTY_AIRPLANE_MODE_ON, "0");
                 ConnectivityManager.from(this).setAirplaneMode(false);
                 Toast.makeText(this, R.string.radio_off_during_emergency_call, Toast.LENGTH_LONG)
                         .show();
                 Log.i(LOG_TAG, "Ignoring airplane mode: emergency call. Turning airplane off");
+            } else if (isCellOffInAirplaneMode(context)) {
+                setRadioPowerOff(context);
             } else {
-                Log.i(LOG_TAG, "Turning radio off - airplane");
-                PhoneUtils.setRadioPower(false);
+                Log.i(LOG_TAG, "Ignoring airplane mode: settings prevent cell radio power off");
             }
-        } else {
-            Log.i(LOG_TAG, "Turning radio on - airplane");
-            PhoneUtils.setRadioPower(true);
+        }
+    }
+
+    private void maybeTurnCellOn(Context context, boolean isAirplaneNewlyOn) {
+        if (!isAirplaneNewlyOn) {
+            setRadioPowerOn(context);
         }
     }
 
@@ -671,14 +720,15 @@ public class PhoneGlobals extends ContextWrapper {
                 if (airplaneMode != AIRPLANE_OFF) {
                     airplaneMode = AIRPLANE_ON;
                 }
-                handleAirplaneModeChange(airplaneMode);
-            } else if (action.equals(TelephonyIntents.ACTION_ANY_DATA_CONNECTION_STATE_CHANGED)) {
+                handleAirplaneModeChange(context, airplaneMode);
+            } else if (action.equals(TelephonyIntents.ACTION_ANY_DATA_CONNECTION_STATE_CHANGED) ||
+                    action.equals(TelephonyIntents.ACTION_DEFAULT_DATA_SUBSCRIPTION_CHANGED)) {
                 int subId = intent.getIntExtra(PhoneConstants.SUBSCRIPTION_KEY,
                         SubscriptionManager.INVALID_SUBSCRIPTION_ID);
                 int phoneId = SubscriptionManager.getPhoneId(subId);
                 String state = intent.getStringExtra(PhoneConstants.STATE_KEY);
                 if (VDBG) {
-                    Log.d(LOG_TAG, "mReceiver: ACTION_ANY_DATA_CONNECTION_STATE_CHANGED");
+                    Log.d(LOG_TAG, "mReceiver: " + action);
                     Log.d(LOG_TAG, "- state: " + state);
                     Log.d(LOG_TAG, "- reason: "
                     + intent.getStringExtra(PhoneConstants.STATE_CHANGE_REASON_KEY));
@@ -690,16 +740,42 @@ public class PhoneGlobals extends ContextWrapper {
 
                 // The "data disconnected due to roaming" notification is shown
                 // if (a) you have the "data roaming" feature turned off, and
-                // (b) you just lost data connectivity because you're roaming.
-                boolean disconnectedDueToRoaming =
-                        !phone.getDataRoamingEnabled()
-                        && PhoneConstants.DataState.DISCONNECTED.equals(state)
+                // (b) your registered to roaming network and
+                // (c) you just lost data connectivity because you're roaming
+                //       OR
+                // (d) DDS was changed to a SIM card where (a) and (b) are true
+                boolean disconnectReasonRoaming =
+                        PhoneConstants.DataState.DISCONNECTED.name().equals(state)
                         && Phone.REASON_ROAMING_ON.equals(
                             intent.getStringExtra(PhoneConstants.STATE_CHANGE_REASON_KEY));
+                Phone ddsPhone = getPhone(SubscriptionManager.getDefaultDataSubscriptionId());
+                if (ddsPhone == null) ddsPhone = getPhone();
+                boolean isRoaming = ddsPhone.getServiceState().getDataRoaming();
+                boolean isRoamingDataEnabled = ddsPhone.getDataRoamingEnabled();
+                boolean isDdsSwitch = action.equals(
+                        TelephonyIntents.ACTION_DEFAULT_DATA_SUBSCRIPTION_CHANGED);
+
+                boolean disconnectedDueToRoaming = mDataDisconnectedDueToRoaming;
+                if ((disconnectReasonRoaming || isDdsSwitch)
+                        && !isRoamingDataEnabled && isRoaming) {
+                    disconnectedDueToRoaming = true;
+                } else if (!isRoaming || isRoamingDataEnabled) {
+                    // Dismiss pop up only if phone is not roaming or dataonroaming is enabled
+                    disconnectedDueToRoaming = false;
+                }
+
+                if (VDBG) Log.d(LOG_TAG, "isRoaming = " + isRoaming + " isRoamingDataEnabled = "
+                        + isRoamingDataEnabled + "disconnectReasonRoaming = "
+                        + disconnectReasonRoaming + " mDataDisconnectedDueToRoaming = "
+                        + mDataDisconnectedDueToRoaming);
+
                 if (mDataDisconnectedDueToRoaming != disconnectedDueToRoaming) {
                     mDataDisconnectedDueToRoaming = disconnectedDueToRoaming;
-                    mHandler.sendEmptyMessage(disconnectedDueToRoaming
+                    int defaultDataSubId = SubscriptionManager.getDefaultDataSubId();
+                    Message msg = mHandler.obtainMessage(disconnectedDueToRoaming
                             ? EVENT_DATA_ROAMING_DISCONNECTED : EVENT_DATA_ROAMING_OK);
+                    msg.arg1 = SubscriptionManager.getSlotId(defaultDataSubId);
+                    mHandler.sendMessage(msg);
                 }
             } else if ((action.equals(TelephonyIntents.ACTION_SIM_STATE_CHANGED)) &&
                     (mPUKEntryActivity != null)) {
@@ -720,7 +796,7 @@ public class PhoneGlobals extends ContextWrapper {
                 handleServiceStateChanged(intent);
             } else if (action.equals(TelephonyIntents.ACTION_EMERGENCY_CALLBACK_MODE_CHANGED)) {
                 int phoneId = intent.getIntExtra(PhoneConstants.PHONE_KEY, 0);
-                phoneInEcm = getPhone(phoneId);
+                phoneInEcm = PhoneFactory.getPhone(phoneId);
                 Log.d(LOG_TAG, "Emergency Callback Mode. phoneId:" + phoneId);
                 if (phoneInEcm != null) {
                     if (TelephonyCapabilities.supportsEcm(phoneInEcm)) {
@@ -802,6 +878,13 @@ public class PhoneGlobals extends ContextWrapper {
      * @param subId the subscription id we should dismiss the notification for.
      */
     public void clearMwiIndicator(int subId) {
-        notificationMgr.updateMwi(subId, false);
+        // Setting voiceMessageCount to 0 will remove the current notification and clear the system
+        // cached value.
+        Phone phone = getPhone(subId);
+        if (phone == null) {
+            Log.w(LOG_TAG, "clearMwiIndicator on null phone, subId:" + subId);
+        } else {
+            phone.setVoiceMessageCount(0);
+        }
     }
 }

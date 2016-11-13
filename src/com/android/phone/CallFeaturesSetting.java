@@ -40,6 +40,7 @@ import android.provider.Settings;
 import android.telecom.PhoneAccountHandle;
 import android.telecom.TelecomManager;
 import android.telephony.CarrierConfigManager;
+import android.telephony.PhoneStateListener;
 import android.telephony.TelephonyManager;
 import android.text.TextUtils;
 import android.util.Log;
@@ -185,6 +186,24 @@ public class CallFeaturesSetting extends PreferenceActivity
         mTelecomManager = TelecomManager.from(this);
     }
 
+    private final PhoneStateListener mPhoneStateListener = new PhoneStateListener() {
+        @Override
+        public void onCallStateChanged(int state, String incomingNumber) {
+            if (DBG) log("PhoneStateListener onCallStateChanged: state is " + state);
+            if (mEnableVideoCalling != null) {
+                mEnableVideoCalling.setEnabled(state == TelephonyManager.CALL_STATE_IDLE);
+            }
+        }
+    };
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        TelephonyManager telephonyManager =
+                (TelephonyManager) getSystemService(Context.TELEPHONY_SERVICE);
+        telephonyManager.listen(mPhoneStateListener, PhoneStateListener.LISTEN_NONE);
+    }
+
     @Override
     protected void onResume() {
         super.onResume();
@@ -198,6 +217,7 @@ public class CallFeaturesSetting extends PreferenceActivity
 
         TelephonyManager telephonyManager =
                 (TelephonyManager) getSystemService(Context.TELEPHONY_SERVICE);
+        telephonyManager.listen(mPhoneStateListener, PhoneStateListener.LISTEN_CALL_STATE);
 
         Preference phoneAccountSettingsPreference = findPreference(PHONE_ACCOUNT_SETTINGS_KEY);
         if (telephonyManager.isMultiSimEnabled() || !SipUtil.isVoipSupported(mPhone.getContext())) {
@@ -229,6 +249,8 @@ public class CallFeaturesSetting extends PreferenceActivity
 
         Preference cdmaOptions = prefSet.findPreference(BUTTON_CDMA_OPTIONS);
         Preference gsmOptions = prefSet.findPreference(BUTTON_GSM_UMTS_OPTIONS);
+        Preference fdnButton = prefSet.findPreference(BUTTON_FDN_KEY);
+        fdnButton.setIntent(mSubscriptionInfoHelper.getIntent(FdnSetting.class));
         if (carrierConfig.getBoolean(CarrierConfigManager.KEY_WORLD_PHONE_BOOL)) {
             cdmaOptions.setIntent(mSubscriptionInfoHelper.getIntent(CdmaCallOptions.class));
             gsmOptions.setIntent(mSubscriptionInfoHelper.getIntent(GsmUmtsCallOptions.class));
@@ -237,19 +259,68 @@ public class CallFeaturesSetting extends PreferenceActivity
             prefSet.removePreference(gsmOptions);
 
             int phoneType = mPhone.getPhoneType();
-            Preference fdnButton = prefSet.findPreference(BUTTON_FDN_KEY);
             if (carrierConfig.getBoolean(CarrierConfigManager.KEY_HIDE_CARRIER_NETWORK_SETTINGS_BOOL)) {
                 prefSet.removePreference(fdnButton);
             } else {
                 if (phoneType == PhoneConstants.PHONE_TYPE_CDMA) {
                     prefSet.removePreference(fdnButton);
+                    addPreferencesFromResource(R.xml.cdma_call_privacy);
 
-                    if (!carrierConfig.getBoolean(
+                    if (carrierConfig.getBoolean(
                             CarrierConfigManager.KEY_VOICE_PRIVACY_DISABLE_UI_BOOL)) {
-                        addPreferencesFromResource(R.xml.cdma_call_privacy);
+                        CdmaVoicePrivacyCheckBoxPreference prefPri = (CdmaVoicePrivacyCheckBoxPreference)
+                                prefSet.findPreference("button_voice_privacy_key");
+                        if (prefPri != null) {
+                             prefSet.removePreference(prefPri);
+                        }
+                    }
+
+                    if (carrierConfig.getBoolean(
+                                CarrierConfigManager.KEY_CDMA_CW_CF_ENABLED_BOOL)
+                                && CdmaCallOptions.isCdmaCallWaitingActivityPresent(mPhone.getContext())) {
+                        Log.d(LOG_TAG, "Enabled CW CF");
+                        PreferenceScreen prefCW = (PreferenceScreen)
+                                prefSet.findPreference("button_cw_key");
+                        if (prefCW != null) {
+                            prefCW.setOnPreferenceClickListener(
+                                    new Preference.OnPreferenceClickListener() {
+                                        @Override
+                                        public boolean onPreferenceClick(Preference preference) {
+                                            Intent intent = new Intent(CdmaCallOptions.CALL_WAITING_INTENT);
+                                            intent.putExtra(PhoneConstants.SUBSCRIPTION_KEY, mPhone.getSubId());
+                                            startActivity(intent);
+                                            return true;
+                                        }
+                                    });
+                        }
+                        PreferenceScreen prefCF = (PreferenceScreen)
+                                prefSet.findPreference("button_cf_expand_key");
+                        if (prefCF != null) {
+                            prefCF.setOnPreferenceClickListener(
+                                    new Preference.OnPreferenceClickListener() {
+                                        @Override
+                                        public boolean onPreferenceClick(Preference preference) {
+                                            Intent intent = new Intent(CdmaCallOptions.CALL_FORWARD_INTENT);
+                                            intent.putExtra(PhoneConstants.SUBSCRIPTION_KEY, mPhone.getSubId());
+                                            startActivity(intent);
+                                            return true;
+                                        }
+                                    });
+                        }
+                    } else {
+                        Log.d(LOG_TAG, "Disabled CW CF");
+                        PreferenceScreen prefCW = (PreferenceScreen)
+                                prefSet.findPreference("button_cw_key");
+                        if (prefCW != null) {
+                            prefSet.removePreference(prefCW);
+                        }
+                        PreferenceScreen prefCF = (PreferenceScreen)
+                                prefSet.findPreference("button_cf_expand_key");
+                        if (prefCF != null) {
+                            prefSet.removePreference(prefCF);
+                        }
                     }
                 } else if (phoneType == PhoneConstants.PHONE_TYPE_GSM) {
-                    fdnButton.setIntent(mSubscriptionInfoHelper.getIntent(FdnSetting.class));
 
                     if (carrierConfig.getBoolean(
                             CarrierConfigManager.KEY_ADDITIONAL_CALL_SETTING_BOOL)) {
@@ -262,7 +333,9 @@ public class CallFeaturesSetting extends PreferenceActivity
             }
         }
 
-        if (ImsManager.isVtEnabledByPlatform(mPhone.getContext())) {
+        if (ImsManager.isVtEnabledByPlatform(mPhone.getContext()) &&
+                ImsManager.isVtProvisionedOnDevice(mPhone.getContext()) &&
+                mPhone.mDcTracker.isDataEnabled(true)) {
             boolean currentValue =
                     ImsManager.isEnhanced4gLteModeSettingEnabledByUser(mPhone.getContext())
                     ? PhoneGlobals.getInstance().phoneMgr.isVideoCallingEnabled(
@@ -300,7 +373,8 @@ public class CallFeaturesSetting extends PreferenceActivity
             } else {
                 prefSet.removePreference(wifiCallingSettings);
             }
-        } else if (!ImsManager.isWfcEnabledByPlatform(mPhone.getContext())) {
+        } else if (!ImsManager.isWfcEnabledByPlatform(mPhone.getContext()) ||
+                !ImsManager.isWfcProvisionedOnDevice(mPhone.getContext())) {
             prefSet.removePreference(wifiCallingSettings);
         } else {
             int resId = com.android.internal.R.string.wifi_calling_off_summary;

@@ -20,7 +20,7 @@
          and other settings UIs.  This is the version of the label for
          tablet devices, where the phone app handles mobile data but not
          actual phone calls. -->
-    <string name="phoneAppLabel" product="tablet">Cellular Data</string>
+    <string name="phoneAppLabel" product="tablet">Mobile Data</string>
 
     <!-- Official label of the phone app, as seen in "Manage Applications"
          and other settings UIs. -->
@@ -95,32 +95,37 @@
     <string name="no_vm_number_msg">No voicemail number is stored on the SIM card.</string>
     <!-- Button label on the "Missing voicemail number" dialog -->
     <string name="add_vm_number_str">Add number</string>
+    <!--Toast in Call settings when asked to launch voicemail for a guest user -->
+    <string name="voice_number_setting_primary_user_only">Voicei mail for Call settings can only be changed by the primary user.</string>
 
     <!-- Status message displayed on SIM PIN unlock panel -->
     <string name="puk_unlocked">Your SIM card has been unblocked. Your phone is unlocking\u2026</string>
     <!-- network depersonalization -->
     <!-- Label text for PIN entry widget on SIM Network Depersonalization panel -->
-    <string name="label_ndp">SIM network unlock PIN</string>
+    <string name="PERSOSUBSTATE_SIM_NETWORK_ENTRY">SIM network unlock PIN</string>
     <!-- Button label on SIM Network Depersonalization panel -->
     <string name="sim_ndp_unlock_text">Unlock</string>
     <!-- Button label on SIM Network Depersonalization panel -->
     <string name="sim_ndp_dismiss_text">Dismiss</string>
     <!-- Status message displayed on SIM Network Depersonalization panel -->
-    <string name="requesting_unlock">Requesting network unlock\u2026</string>
+    <string name="PERSOSUBSTATE_SIM_NETWORK_IN_PROGRESS">Requesting SIM network unlock\u2026</string>
     <!-- Error message displayed on SIM Network Depersonalization panel -->
-    <string name="unlock_failed">Network unlock request unsuccessful.</string>
+    <string name="PERSOSUBSTATE_SIM_NETWORK_ERROR">SIM Network unlock request unsuccessful.</string>
     <!-- Success message displayed on SIM Network Depersonalization panel -->
-    <string name="unlock_success">Network unlock successful.</string>
+    <string name="PERSOSUBSTATE_SIM_NETWORK_SUCCESS">SIM Network unlock successful.</string>
 
     <!-- settings strings -->
 
     <!-- Error message for users that aren't allowed to modify Mobile Network settings [CHAR LIMIT=none] -->
-    <string name="mobile_network_settings_not_available">Cellular network settings are not available for this user</string>
+    <string name="mobile_network_settings_not_available">Mobile network settings are not available for this user</string>
     <!-- GSM Call settings screen, setting option name. [CHAR LIMIT=40] -->
     <string name="labelGSMMore">GSM call settings</string>
     <!-- GSM Call settings screen, setting option name with label indicating the SIM the settings
          are applied to. [CHAR LIMIT=40] -->
     <string name="labelGsmMore_with_label">GSM call settings (<xliff:g id="subscriptionlabel" example="T-Mobile">%s</xliff:g>)</string>
+    <string name="labelCFType">Call Forward Setting</string>
+    <string name="labelCFVoice">Voice</string>
+    <string name="labelCFVideo">Video</string>
     <!-- CDMA Call settings screen, setting option name -->
     <string name="labelCDMAMore">CDMA call settings</string>
     <!-- CDMA Call settings screen, setting option name with label indicating the SIM the settings
@@ -222,7 +227,22 @@
     <!-- Call forwarding settings screen, Always forward is enabled but the number is unavailable -->
     <string name="sum_cfu_enabled_no_number">Number is unavailable</string>
     <!-- Call forwarding settings screen, setting summary text when Always forward is disabled -->
-    <string name="sum_cfu_disabled">Off</string>
+    <string name="sum_cfu_disabled">Disabled</string>
+
+    <!-- Call forwarding settings screen, setting timer info for cfut case -->
+    <string name="set_time_period">Set time period</string>
+    <string name="all_day">All day</string>
+    <string name="time_interval_char">: </string>
+    <string name="time_start">From</string>
+    <string name="time_start_hour">time start hour</string>
+    <string name="time_start_minute">time start minute</string>
+    <string name="time_end">To</string>
+    <string name="time_end_hour">time end hour</string>
+    <string name="time_end_minute">time end minute</string>
+    <string name="time_formate_am">AM</string>
+    <string name="time_formate_pm">PM</string>
+    <string name="cf_setting_mobile_data_alert">Please turn on mobile data and make sure that WLAN is off</string>
+    <string name="cf_setting_mobile_data_roaming_alert">Please turn on data roaming</string>
 
     <!-- Call forwarding settings screen, setting option name -->
     <string name="labelCFB">When busy</string>
@@ -330,9 +350,31 @@
     <!-- Call settings screen, "Voicemail" screen, default option - Your Carrier -->
     <string name="voicemail_default">Your carrier</string>
 
+    <!-- Hint for the old PIN field in the change vociemail PIN dialog -->
+    <string name="vm_change_pin_old_pin">Old PIN</string>
+    <!-- Hint for the new PIN field in the change vociemail PIN dialog -->
+    <string name="vm_change_pin_new_pin">New PIN</string>
+
+    <!-- Message on the dialog when PIN changing is in progress -->
+    <string name="vm_change_pin_progress_message">Please wait.</string>
+    <!-- Error message for the voicemail PIN change if the PIN is too short -->
+    <string name="vm_change_pin_error_too_short">The new PIN is too short.</string>
+    <!-- Error message for the voicemail PIN change if the PIN is too long -->
+    <string name="vm_change_pin_error_too_long">The new PIN is too long.</string>
+    <!-- Error message for the voicemail PIN change if the PIN is too weak -->
+    <string name="vm_change_pin_error_too_weak">The new PIN is too weak. A strong password should not have continuous sequence or repeated digits.</string>
+    <!-- Error message for the voicemail PIN change if the old PIN entered doesn't match  -->
+    <string name="vm_change_pin_error_mismatch">The old PIN does not match.</string>
+    <!-- Error message for the voicemail PIN change if the new PIN contains invalid character -->
+    <string name="vm_change_pin_error_invalid">The new PIN contains invalid characters.</string>
+    <!-- Error message for the voicemail PIN change if operation has failed -->
+    <string name="vm_change_pin_error_system_error">Unable to change PIN</string>
+    <!-- Message to replace the transcription if a visual voicemail message is not supported-->
+    <string name="vvm_unsupported_message_format">Unsupported message type, call <xliff:g id="number" example="*86">%s</xliff:g> to listen.</string>
+
     <!-- networks setting strings --><skip/>
     <!-- Mobile network settings screen title -->
-    <string name="mobile_networks">Cellular network settings</string>
+    <string name="mobile_networks">Mobile network settings</string>
     <!-- Available networks screen title/heading -->
     <string name="label_available">Available networks</string>
     <!-- Mobile network settings screen, toast when searching for available networks -->
@@ -397,8 +439,41 @@
      <string name="preferred_network_mode_lte_cdma_summary">Preferred network mode: LTE / CDMA</string>
      <!-- Mobile network settings, summary for preferred network mode TDSCDMTA [CHAR LIMIT=100] -->
      <string name="preferred_network_mode_tdscdma_summary">Preferred network mode: TDSCDMA</string>
+    <!-- Mobile network settings, summary for preferred network mode TDSCDMA / WCDMA[CHAR LIMIT=100] -->
+    <string name="preferred_network_mode_tdscdma_wcdma_summary">Preferred network mode: TDSCDMA / WCDMA</string>
+    <!-- Mobile network settings, summary for preferred network mode LTE / TDSCDMA[CHAR LIMIT=100] -->
+    <string name="preferred_network_mode_lte_tdscdma_summary">Preferred network mode: LTE / TDSCDMA</string>
+    <!-- Mobile network settings, summary for preferred network mode TDSCDMA / GSM[CHAR LIMIT=100] -->
+    <string name="preferred_network_mode_tdscdma_gsm_summary">Preferred network mode: TDSCDMA / GSM</string>
+    <!-- Mobile network settings, summary for preferred network mode LTE / GSM / TDSCDMA[CHAR LIMIT=100] -->
+    <string name="preferred_network_mode_lte_tdscdma_gsm_summary">Preferred network mode: LTE/GSM/TDSCDMA</string>
+    <!-- Mobile network settings, summary for preferred network mode TDSCDMA / GSM / WCDMA[CHAR LIMIT=100] -->
+    <string name="preferred_network_mode_tdscdma_gsm_wcdma_summary">Preferred network mode: TDSCDMA/GSM/WCDMA</string>
+    <!-- Mobile network settings, summary for preferred network mode LTE / TDSCDMA / WCDMA[CHAR LIMIT=100] -->
+    <string name="preferred_network_mode_lte_tdscdma_wcdma_summary">Preferred network mode: LTE/TDSCDMA/WCDMA</string>
+    <!-- Mobile network settings, summary for preferred network mode LTE / TDSCDMA / GSM / WCDMA[CHAR LIMIT=100] -->
+    <string name="preferred_network_mode_lte_tdscdma_gsm_wcdma_summary">Preferred network mode: LTE/TDSCDMA/GSM/WCDMA</string>
+    <!-- Mobile network settings, summary for preferred network mode TDSCDMA / CDMA / EvDo / GSM / WCDMA[CHAR LIMIT=100] -->
+    <string name="preferred_network_mode_tdscdma_cdma_evdo_gsm_wcdma_summary">Preferred network mode: TDSCDMA/CDMA/EvDo/GSM/WCDMA</string>
+    <!-- Mobile network settings, summary for preferred network mode LTE / TDSCDMA / CDMA / EvDo / GSM / WCDMA[CHAR LIMIT=100] -->
+    <string name="preferred_network_mode_lte_tdscdma_cdma_evdo_gsm_wcdma_summary">Preferred network mode: LTE/TDSCDMA/CDMA/EvDo/GSM/WCDMA</string>
+    <!-- In-call screen: call failure reason (call denied because call barring
+            is ON on MT side ) -->
+    <string name="callFailed_incoming_cb_enabled">Party has barred all Incoming calls.</string>
+    <!-- In-call screen: status label for an incoming call that is not answered and forwarded  -->
+    <string name="callUnanswered_forwarded">Call Unanswered and Forwarded</string>
 
     <string-array name="preferred_network_mode_choices">
+        <item>LTE/TDSCDMA/CDMA/EVDO/GSM/WCDMA </item>
+        <item>TDSCDMA/CDMA/EVDO/GSM/WCDMA </item>
+        <item>LTE/TDSCDMA/GSM/WCDMA</item>
+        <item>LTE/TDSCDMA/WCDMA</item>
+        <item>TDSCDMA/GSM/WCDMA</item>
+        <item>LTE/TDSCDMA/GSM</item>
+        <item>TDSCDMA/GSM</item>
+        <item>LTE/TDSCDMA</item>
+        <item>TDSCDMA/WCDMA</item>
+        <item>TDSCDMA only</item>
         <item>LTE / WCDMA</item>
         <item>LTE</item>
         <item>Global</item>
@@ -414,6 +489,16 @@
         <item>GSM/WCDMA preferred</item>
     </string-array>
     <string-array name="preferred_network_mode_values"  translatable="false">
+        <item>"22"</item>
+        <item>"21"</item>
+        <item>"20"</item>
+        <item>"19"</item>
+        <item>"18"</item>
+        <item>"17"</item>
+        <item>"16"</item>
+        <item>"15"</item>
+        <item>"14"</item>
+        <item>"13"</item>
         <item>"12"</item>
         <item>"11"</item>
         <item>"10"</item>
@@ -430,6 +515,8 @@
     </string-array>
     <!-- Cellular network 4G title [CHAR LIMIT=30] -->
     <string name="enhanced_4g_lte_mode_title">Enhanced 4G LTE Mode</string>
+    <!-- Carrier variant of Enhaced 4G LTE Mode title.  [CHAR LIMIT=50] -->
+    <string name="enhanced_4g_lte_mode_title_variant">Advanced Calling</string>
     <!-- Cellular network 4G summary [CHAR LIMIT=80] -->
     <string name="enhanced_4g_lte_mode_summary">Use LTE services to improve voice and other communications (recommended)</string>
 
@@ -456,8 +543,10 @@
 
     <!-- USSD aggregation dialog box: separator strings between messages (new-lines will be added before and after) -->
     <string name="ussd_dialog_sep" translatable="false">----------</string>
+    <string name=" hide_error_from_network_text">Unable to Process Request</string>
 
     <string name="gsm_umts_options">GSM/UMTS Options</string>
+    <string name="call_forward_option">CallForward Options</string>
     <string name="cdma_options">CDMA Options</string>
 
     <!-- Screen option on the mobile network settings to go into data usage settings -->
@@ -812,7 +901,7 @@
     <!-- FDN settings: error message displayed in a popup (toast) -->
     <string name="pin2_invalid">FDN wasn\'t updated because you typed an incorrect PIN.</string>
     <!-- FDN settings: error message displayed in a popup (toast) -->
-    <string name="fdn_invalid_number">FDN wasn\'t updated because the number can\'t exceed 20 digits.</string>
+    <string name="fdn_invalid_number">FDN wasn\'t updated because the number is empty or exceeds 20 digits.</string>
     <!-- FDN settings: error message displayed in a popup (toast), when the entered
          FDN number was inappropriate, OR, PIN2 the user entered was incorrect.
          Because of API restriction, there's no way to determine which is the exact
@@ -964,13 +1053,15 @@
          This string is currently unused (see comments in InCallScreen.java.) -->
     <string name="incall_error_emergency_only">Not registered on network.</string>
     <!-- In-call screen: call failure message displayed in an error dialog -->
-    <string name="incall_error_out_of_service">Cellular network not available.</string>
+    <string name="incall_error_out_of_service">Mobile network not available.</string>
     <!-- In-call screen: call failure message displayed in an error dialog -->
-    <string name="incall_error_out_of_service_wfc">Cellular network is not available. Connect to a wireless network to make a call.</string>
+    <string name="incall_error_out_of_service_wfc">Mobile network is not available. Connect to a wireless network to make a call.</string>
     <!-- In-call screen: call failure message displayed in an error dialog -->
     <string name="incall_error_no_phone_number_supplied">To place a call, enter a valid number.</string>
     <!-- In-call screen: call failure message displayed in an error dialog -->
     <string name="incall_error_call_failed">Call failed.</string>
+    <!-- In-call screen: call failure message displayed in an error dialog -->
+    <string name="incall_error_cannot_add_call">Call cannot be added at this time.</string>
     <!-- In-call screen: status message displayed in a dialog when starting an MMI -->
     <string name="incall_status_dialed_mmi">Starting MMI sequence\u2026</string>
     <!-- In-call screen: message displayed in an error dialog -->
@@ -991,6 +1082,8 @@
     <string name="incall_error_supp_service_hold">Can\'t hold calls.</string>
     <!-- In-call screen: call failure message displayed in an error dialog when WFC is enabled, is wifi-only, and not connected to a wireless network. [CHAR_LIMIT=NONE] -->
     <string name="incall_error_wfc_only_no_wireless_network">Connect to a wireless network to make a call.</string>
+    <!-- In-call screen: call failure message displayed in an error dialog when the user is connected to a wireless network, but wifi calling is turned off. [CHAR_LIMIT=NONE] -->
+    <string name="incall_error_promote_wfc">Enable Wi-Fi calling to make a call.</string>
 
     <!-- Dialog title for the "radio enable" UI for emergency calls -->
     <string name="emergency_enable_radio_dialog_title">Emergency call</string>
@@ -1235,6 +1328,11 @@
     <!-- Visual voicemail on/off title [CHAR LIMIT=40] -->
     <string name="voicemail_visual_voicemail_switch_title">Visual Voicemail</string>
 
+    <!-- Voicemail change PIN dialog title [CHAR LIMIT=40] -->
+    <string name="voicemail_set_pin_dialog_title">Set PIN</string>
+    <!-- Voicemail change PIN dialog title [CHAR LIMIT=40] -->
+    <string name="voicemail_change_pin_dialog_title">Change PIN</string>
+
     <!-- Voicemail ringtone title. The user clicks on this preference to select
          which sound to play when a voicemail notification is received.
          [CHAR LIMIT=30] -->
@@ -1292,7 +1390,7 @@
 
     <!-- Status hint label for an incoming call over a wifi network which has not been accepted yet.
          [CHAR LIMIT=25] -->
-    <string name="status_hint_label_incoming_wifi_call">Incoming Wi-Fi call</string>
+    <string name="status_hint_label_incoming_wifi_call">Wi-Fi call from</string>
     <!-- Status hint label for a call being made over a wifi network. [CHAR LIMIT=25] -->
     <string name="status_hint_label_wifi_call">Wi-Fi call</string>
 
@@ -1302,6 +1400,8 @@
     <string name="voicemail_notification_vibrate_key">voicemail_notification_vibrate_key</string>
     <!-- DO NOT TRANSLATE. Internal key for a visual voicemail preference. -->
     <string name="voicemail_visual_voicemail_key">voicemail_visual_voicemail_key</string>
+    <!-- DO NOT TRANSLATE. Internal key for a voicemail change pin preference. -->
+    <string name="voicemail_change_pin_key">voicemail_change_pin_key</string>
     <!-- DO NOT TRANSLATE. Internal key for tty mode preference. -->
     <string name="tty_mode_key">button_tty_mode_key</string>
     <!-- DO NOT TRANSLATE. Internal key for a voicemail notification preference. -->
@@ -1326,4 +1426,28 @@
         There are too many active calls. Please end or merge existing calls before placing a new one.
     </string>
 
+    <!-- The title for the change voicemail PIN activity -->
+    <string name="change_pin_title">Change Voicemail PIN</string>
+    <!-- The label for the continue button in change voicemail PIN activity -->
+    <string name="change_pin_continue_label">Continue</string>
+    <!-- The label for the cancel button in change voicemail PIN activity -->
+    <string name="change_pin_cancel_label">Cancel</string>
+    <!-- The label for the ok button in change voicemail PIN activity -->
+    <string name="change_pin_ok_label">Ok</string>
+    <!-- The title for the enter old pin step in change voicemail PIN activity -->
+    <string name="change_pin_enter_old_pin_header">Confirm your old PIN</string>
+    <!-- The hint for the enter old pin step in change voicemail PIN activity -->
+    <string name="change_pin_enter_old_pin_hint">Enter your voicemail PIN to continue.</string>
+    <!-- The title for the enter new pin step in change voicemail PIN activity -->
+    <string name="change_pin_enter_new_pin_header">Set a new PIN</string>
+    <!-- The hint for the enter new pin step in change voicemail PIN activity -->
+    <string name="change_pin_enter_new_pin_hint">PIN must be <xliff:g id="min" example="4">%1$d</xliff:g>-<xliff:g id="max" example="7">%2$d</xliff:g> digits.</string>
+    <!-- The title for the confirm new pin step in change voicemail PIN activity -->
+    <string name="change_pin_confirm_pin_header">Confirm your PIN</string>
+    <!-- The error message for th confirm new pin step in change voicemail PIN activity, if the pin doen't match the one previously entered -->
+    <string name="change_pin_confirm_pins_dont_match">PINs don\'t match</string>
+    <!-- The toast to show after the voicemail PIN has been successfully changed -->
+    <string name="change_pin_succeeded">Voicemail PIN updated</string>
+    <!-- The error message to show if the server reported an error while attempting to change the voicemail PIN -->
+    <string name="change_pin_system_error">Unable to set PIN</string>
 </resources>

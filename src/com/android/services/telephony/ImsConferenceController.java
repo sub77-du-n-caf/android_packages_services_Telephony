@@ -19,24 +19,30 @@ package com.android.services.telephony;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneConstants;
 import com.android.phone.PhoneUtils;
+import com.android.phone.R;
 
+import android.content.Context;
 import android.telecom.Conference;
 import android.telecom.Connection;
 import android.telecom.ConnectionService;
 import android.telecom.DisconnectCause;
 import android.telecom.Conferenceable;
 import android.telecom.PhoneAccountHandle;
+import android.telecom.VideoProfile;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * Manages conferences for IMS connections.
  */
 public class ImsConferenceController {
-
+    private int mVideoConferenceMaxSupported = -1;
+    private boolean mIsConferenceCallLimited = false;
     /**
      * Conference listener; used to receive notification when a conference has been disconnected.
      */
@@ -78,6 +84,12 @@ public class ImsConferenceController {
             Log.v(this, "onConferenceStarted");
             recalculate();
         }
+
+        @Override
+        public void onConferenceSupportedChanged(Connection c, boolean isConferenceSupported) {
+            Log.v(this, "onConferenceSupportedChanged");
+            recalculate();
+        }
     };
 
     /**
@@ -111,6 +123,19 @@ public class ImsConferenceController {
      * @param connection
      */
     void add(TelephonyConnection connection) {
+        // DO NOT add external calls; we don't want to consider them as a potential conference
+        // member.
+        if ((connection.getConnectionProperties() & Connection.PROPERTY_IS_EXTERNAL_CALL) ==
+                Connection.PROPERTY_IS_EXTERNAL_CALL) {
+            return;
+        }
+
+        if (mTelephonyConnections.contains(connection)) {
+            // Adding a duplicate realistically shouldn't happen.
+            Log.w(this, "add - connection already tracked; connection=%s", connection);
+            return;
+        }
+
         // Note: Wrap in Log.VERBOSE to avoid calling connection.toString if we are not going to be
         // outputting the value.
         if (Log.VERBOSE) {
@@ -128,10 +153,24 @@ public class ImsConferenceController {
      * @param connection
      */
     void remove(Connection connection) {
+        // External calls are not part of the conference controller, so don't remove them.
+        if ((connection.getConnectionProperties() & Connection.PROPERTY_IS_EXTERNAL_CALL) ==
+                Connection.PROPERTY_IS_EXTERNAL_CALL) {
+            return;
+        }
+
+        if (!mTelephonyConnections.contains(connection)) {
+            // Debug only since TelephonyConnectionService tries to clean up the connections tracked
+            // when the original connection changes.  It does this proactively.
+            Log.d(this, "remove - connection not tracked; connection=%s", connection);
+            return;
+        }
+
         if (Log.VERBOSE) {
             Log.v(this, "remove connection: %s", connection);
         }
 
+        connection.removeConnectionListener(mConnectionListener);
         mTelephonyConnections.remove(connection);
         recalculateConferenceable();
     }
@@ -146,12 +185,28 @@ public class ImsConferenceController {
     }
 
     /**
+    *return whether need to limit video conference call max supported for TMO feature
+    */
+    private boolean allowAddingVideoConfParticipant(ImsConference conference) {
+        if (mVideoConferenceMaxSupported == -1) {
+            Context context = mConnectionService.getApplicationContext();
+            mIsConferenceCallLimited = context.getResources()
+                    .getBoolean(R.bool.config_enable_video_conference_call_limit);
+            mVideoConferenceMaxSupported = context.getResources().getInteger(
+                    R.integer.conference_call_max_participants_supported);
+        }
+        boolean isVideoConference = !VideoProfile.isAudioOnly(conference.getVideoState());;
+        return mIsConferenceCallLimited && isVideoConference && conference.getConnections().size()
+                >= mVideoConferenceMaxSupported;
+    }
+
+    /**
      * Calculates the conference-capable state of all GSM connections in this connection service.
      */
     private void recalculateConferenceable() {
         Log.v(this, "recalculateConferenceable : %d", mTelephonyConnections.size());
-        List<Conferenceable> activeConnections = new ArrayList<>(mTelephonyConnections.size());
-        List<Conferenceable> backgroundConnections = new ArrayList<>(mTelephonyConnections.size());
+        HashSet<Conferenceable> conferenceableSet = new HashSet<>(mTelephonyConnections.size() +
+                mImsConferences.size());
 
         // Loop through and collect all calls which are active or holding
         for (TelephonyConnection connection : mTelephonyConnections) {
@@ -172,91 +227,69 @@ public class ImsConferenceController {
             // If this connection does not support being in a conference call, then it is not
             // conferenceable with any other connection.
             if (!connection.isConferenceSupported()) {
+                connection.setConferenceables(Collections.<Conferenceable>emptyList());
                 continue;
             }
 
             switch (connection.getState()) {
                 case Connection.STATE_ACTIVE:
-                    activeConnections.add(connection);
-                    continue;
+                    // fall through
                 case Connection.STATE_HOLDING:
-                    backgroundConnections.add(connection);
+                    conferenceableSet.add(connection);
                     continue;
                 default:
                     break;
             }
-            connection.setConferenceableConnections(Collections.<Connection>emptyList());
+            // This connection is not active or holding, so clear all conferencable connections
+            connection.setConferenceables(Collections.<Conferenceable>emptyList());
         }
-
+        // Also loop through all active conferences and collect the ones that are ACTIVE or HOLDING.
         for (ImsConference conference : mImsConferences) {
             if (Log.DEBUG) {
                 Log.d(this, "recalc - %s %s", conference.getState(), conference);
             }
-
-            if (!conference.isConferenceHost()) {
+            if (!conference.isConferenceHost()
+                    || allowAddingVideoConfParticipant(conference)) {
                 if (Log.VERBOSE) {
                     Log.v(this, "skipping conference (not hosted on this device): %s", conference);
+                    Log.v(this,"the conference call connection size is : %d"
+                            , conference.getConnections().size());
                 }
                 continue;
             }
 
             switch (conference.getState()) {
                 case Connection.STATE_ACTIVE:
-                    activeConnections.add(conference);
-                    continue;
+                    //fall through
                 case Connection.STATE_HOLDING:
-                    backgroundConnections.add(conference);
+                    conferenceableSet.add(conference);
                     continue;
                 default:
                     break;
             }
         }
 
-        Log.v(this, "active: %d, holding: %d", activeConnections.size(),
-                backgroundConnections.size());
+        Log.v(this, "conferenceableSet size: " + conferenceableSet.size());
 
-        // Go through all the active connections and set the background connections as
-        // conferenceable.
-        for (Conferenceable conferenceable : activeConnections) {
-            if (conferenceable instanceof Connection) {
-                Connection connection = (Connection) conferenceable;
-                connection.setConferenceables(backgroundConnections);
+        for (Conferenceable c : conferenceableSet) {
+            if (c instanceof Connection) {
+                // Remove this connection from the Set and add all others
+                List<Conferenceable> conferenceables = conferenceableSet
+                        .stream()
+                        .filter(conferenceable -> c != conferenceable)
+                        .collect(Collectors.toList());
+                ((Connection) c).setConferenceables(conferenceables);
+            } else if (c instanceof Conference) {
+                // Remove all conferences from the set, since we can not conference a conference
+                // to another conference.
+                List<Connection> connections = conferenceableSet
+                        .stream()
+                        .filter(conferenceable -> conferenceable instanceof Connection)
+                        .map(conferenceable -> (Connection) conferenceable)
+                        .collect(Collectors.toList());
+                // Conference equivalent to setConferenceables that only accepts Connections
+                ((Conference) c).setConferenceableConnections(connections);
             }
-        }
-
-        // Go through all the background connections and set the active connections as
-        // conferenceable.
-        for (Conferenceable conferenceable : backgroundConnections) {
-            if (conferenceable instanceof Connection) {
-                Connection connection = (Connection) conferenceable;
-                connection.setConferenceables(activeConnections);
-            }
-
-        }
-
-        // Set the conference as conferenceable with all the connections
-        for (ImsConference conference : mImsConferences) {
-            // If this conference is not being hosted on the current device, we cannot conference it
-            // with any other connections.
-            if (!conference.isConferenceHost()) {
-                if (Log.VERBOSE) {
-                    Log.v(this, "skipping conference (not hosted on this device): %s",
-                            conference);
-                }
-                continue;
-            }
-
-            List<Connection> nonConferencedConnections =
-                new ArrayList<>(mTelephonyConnections.size());
-            for (TelephonyConnection c : mTelephonyConnections) {
-                if (c.getConference() == null && c.isConferenceSupported()) {
-                    nonConferencedConnections.add(c);
-                }
-            }
-            if (Log.VERBOSE) {
-                Log.v(this, "conference conferenceable: %s", nonConferencedConnections);
-            }
-            conference.setConferenceableConnections(nonConferencedConnections);
         }
     }
 
@@ -320,6 +353,7 @@ public class ImsConferenceController {
         // This is necessary since the Connection Service does not support removing a connection
         // from Telecom.  Instead we create a new instance and remove the old one from telecom.
         TelephonyConnection conferenceHostConnection = connection.cloneConnection();
+        conferenceHostConnection.setVideoPauseSupported(connection.getVideoPauseSupported());
 
         PhoneAccountHandle phoneAccountHandle = null;
 
